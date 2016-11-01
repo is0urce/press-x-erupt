@@ -7,7 +7,7 @@
 
 namespace px
 {
-	class application_base
+	class basic_application
 	{
 	public:
 		void start()
@@ -33,10 +33,10 @@ namespace px
 		}
 
 	public:
-		application_base()
+		basic_application(std::string name)
 			: m_init(false)
 			, m_fullscreen(false)
-			, m_name("press-x-application")
+			, m_name(name)
 			, m_width(800), m_height(600)
 		{
 			m_init = glfwInit() == GLFW_TRUE;
@@ -45,7 +45,9 @@ namespace px
 				start();
 			}
 		}
-		virtual ~application_base()
+		basic_application(basic_application const&) = delete;
+		basic_application& operator=(basic_application const&) = delete;
+		virtual ~basic_application()
 		{
 			glfwDestroyWindow(m_window);
 			if (m_init)
