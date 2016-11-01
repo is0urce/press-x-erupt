@@ -31,6 +31,10 @@ namespace px
 		{
 			return m_name;
 		}
+		GLFWwindow* window() noexcept
+		{
+			return m_window;
+		}
 
 	public:
 		basic_application(std::string name)
