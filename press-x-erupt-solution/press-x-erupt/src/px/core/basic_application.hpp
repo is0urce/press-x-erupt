@@ -23,6 +23,14 @@ namespace px
 
 			return 0; // no errors
 		}
+		int width() const noexcept
+		{
+			return m_width;
+		}
+		int height() const noexcept
+		{
+			return m_height;
+		}
 		bool fullscreen() const noexcept
 		{
 			return m_fullscreen;
@@ -60,12 +68,18 @@ namespace px
 			}
 		}
 
+	protected:
+		virtual void frame()
+		{
+		}
+
 	private:
 		void main_loop()
 		{
 			while (!glfwWindowShouldClose(m_window))
 			{
 				glfwPollEvents();
+				frame();
 			}
 		}
 
