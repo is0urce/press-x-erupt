@@ -2,6 +2,11 @@
 
 #include <px/core/basic_application.hpp>
 
+#pragma warning(push)	// disable for this header only & restore original warning level
+#pragma warning(disable:4201) // unions for rgba and xyzw
+#include <glm/glm.hpp>
+#pragma warning(pop)
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -107,7 +112,7 @@ namespace px
 
 			if (result == VK_ERROR_OUT_OF_DATE_KHR)
 			{
-				reset_swapchain(m_width, m_height);
+				reset_swapchain();
 				return;
 			}
 			else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
@@ -145,11 +150,22 @@ namespace px
 			presentInfo.pImageIndices = &image_index;
 			presentInfo.pResults = nullptr;
 
-			vkQueuePresentKHR(m_presentation_queue, &presentInfo);
+			result = vkQueuePresentKHR(m_presentation_queue, &presentInfo);
+
+			if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+			{
+				reset_swapchain();
+			}
+			else if (result != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to present swap chain image!");
+			}
 		}
 		void resize(int width, int height)
 		{
-			reset_swapchain(width, height);
+			m_width = width;
+			m_height = height;
+			reset_swapchain();
 		}
 
 	private:
@@ -645,12 +661,9 @@ namespace px
 				throw std::runtime_error("failed to create semaphores!");
 			}
 		}
-		void reset_swapchain(int width, int height)
+		void reset_swapchain()
 		{
 			vkDeviceWaitIdle(m_logical_device);
-
-			m_width = width;
-			m_height = height;
 
 			create_swapchain();
 			create_image_views();
