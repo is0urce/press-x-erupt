@@ -8,6 +8,7 @@
 #pragma warning(pop)
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -43,6 +44,23 @@ namespace px
 				return !formats.empty() && !presentation_modes.empty();
 			}
 		};
+		struct vertex
+		{
+			glm::vec2 position;
+			glm::vec3 color;
+			constexpr static VkVertexInputBindingDescription binding_description()
+			{
+				return VkVertexInputBindingDescription{ 0 , sizeof(vertex), VK_VERTEX_INPUT_RATE_VERTEX };
+			}
+			constexpr static std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions()
+			{
+				return std::array<VkVertexInputAttributeDescription, 2>	{
+					VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex, position) },
+					VkVertexInputAttributeDescription{ 0, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex, color) }
+				};
+			}
+		};
+
 		renderer(basic_application & application)
 			: m_application_info{}
 			, m_instance_info{}
@@ -391,9 +409,7 @@ namespace px
 			viewport.height = static_cast<float>(m_extent.height);
 			viewport.minDepth = 0.0f;
 			viewport.maxDepth = 1.0f;
-			VkRect2D scissor = {};
-			scissor.offset = { 0, 0 };
-			scissor.extent = m_extent;
+			VkRect2D scissor = { { 0, 0 }, m_extent };
 
 			auto vertex = create_shader(read_file("data/shaders/triangle.vert.spv"));
 			auto fragment = create_shader(read_file("data/shaders/triangle.frag.spv"));
@@ -622,7 +638,7 @@ namespace px
 
 			for (size_t i = 0; i != size; ++i)
 			{
-				VkCommandBufferBeginInfo begin_info = {};
+				VkCommandBufferBeginInfo begin_info{};
 				begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 				begin_info.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 				begin_info.pInheritanceInfo = nullptr;
@@ -630,7 +646,7 @@ namespace px
 				vkBeginCommandBuffer(m_command_buffers[i], &begin_info);
 
 				VkClearValue clear_color = { 0.0f, 0.0f, 0.0f, 1.0f };
-				VkRenderPassBeginInfo renderpass_info = {};
+				VkRenderPassBeginInfo renderpass_info{};
 				renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 				renderpass_info.renderPass = m_renderpass;
 				renderpass_info.framebuffer = m_swapchain_framebuffers[i];
@@ -652,8 +668,7 @@ namespace px
 		}
 		void create_semaphores()
 		{
-			VkSemaphoreCreateInfo semaphoreInfo = {};
-			semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			VkSemaphoreCreateInfo semaphoreInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 
 			if (vkCreateSemaphore(m_logical_device, &semaphoreInfo, nullptr, &m_image_available) != VK_SUCCESS ||
 				vkCreateSemaphore(m_logical_device, &semaphoreInfo, nullptr, &m_rendering_finished) != VK_SUCCESS)
@@ -715,7 +730,7 @@ namespace px
 				&& features.geometryShader
 				&& find_queues(device)
 				&& support_extensions(device)
-				&& swapchain_support(device); // querry swapchain support after checking for swapchain extention support
+				&& swapchain_support(device); // query swapchain support after checking for swapchain extention support
 		}
 		bool support_extensions(VkPhysicalDevice device) const
 		{
@@ -941,6 +956,12 @@ namespace px
 
 		VkSemaphore m_image_available;
 		VkSemaphore m_rendering_finished;
+
+		const std::vector<vertex> vertices = {
+			{ { 0.0f, -0.5f },{ 1.0f, 0.0f, 0.0f } },
+			{ { 0.5f, 0.5f },{ 0.0f, 1.0f, 0.0f } },
+			{ { -0.5f, 0.5f },{ 0.0f, 0.0f, 1.0f } }
+		};
 
 	private:
 #ifndef _DEBUG
