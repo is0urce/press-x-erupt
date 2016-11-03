@@ -1,6 +1,7 @@
 #pragma once
 
 #include <px/core/basic_application.hpp>
+#include <px/vk_instance.hpp>
 
 #pragma warning(push)	// disable for this header only & restore original warning level
 #pragma warning(disable:4201) // unions for rgba and xyzw
@@ -62,10 +63,7 @@ namespace px
 		};
 
 		renderer(basic_application & application)
-			: m_application_info{}
-			, m_instance_info{}
-			, m_create_debug_info{}
-			, m_physical_device(VK_NULL_HANDLE)
+			: m_physical_device(VK_NULL_HANDLE)
 			, m_swapchain(VK_NULL_HANDLE)
 			, m_pipeline_layout(VK_NULL_HANDLE)
 			, m_pipeline(VK_NULL_HANDLE)
@@ -189,10 +187,10 @@ namespace px
 	private:
 		void create_instance()
 		{
-			m_application_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-			m_application_info.pApplicationName = "renderer";
-			m_application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-			m_application_info.apiVersion = VK_API_VERSION_1_0;
+			VkApplicationInfo application_info{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+			application_info.pApplicationName = "renderer";
+			application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+			application_info.apiVersion = VK_API_VERSION_1_0;
 
 			if (validate && !layer_support(validation))
 			{
@@ -200,26 +198,26 @@ namespace px
 			}
 			auto extensions = required_extensions();
 
-			m_instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-			m_instance_info.pApplicationInfo = &m_application_info;
-			m_instance_info.enabledExtensionCount = static_cast<decltype(VkInstanceCreateInfo::enabledExtensionCount)>(extensions.size());
-			m_instance_info.ppEnabledExtensionNames = extensions.data();
-			m_instance_info.enabledLayerCount = static_cast<decltype(VkInstanceCreateInfo::enabledLayerCount)>(validation.size());
-			m_instance_info.ppEnabledLayerNames = validation.empty() ? nullptr : validation.data();
+			VkInstanceCreateInfo instance_info{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+			instance_info.pApplicationInfo = &application_info;
+			instance_info.enabledExtensionCount = static_cast<decltype(VkInstanceCreateInfo::enabledExtensionCount)>(extensions.size());
+			instance_info.ppEnabledExtensionNames = extensions.data();
+			instance_info.enabledLayerCount = static_cast<decltype(VkInstanceCreateInfo::enabledLayerCount)>(validation.size());
+			instance_info.ppEnabledLayerNames = validation.empty() ? nullptr : validation.data();
 
-			if (vkCreateInstance(&m_instance_info, nullptr, &m_instance) != VK_SUCCESS)
+			if (vkCreateInstance(&instance_info, nullptr, &m_instance) != VK_SUCCESS)
 			{
 				throw std::runtime_error("failed to create instance!");
 			}
 		}
 		void setup_debug()
 		{
-			m_create_debug_info.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
-			m_create_debug_info.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-			m_create_debug_info.pfnCallback = debug_callback;
-
 			if (validate)
 			{
+				VkDebugReportCallbackCreateInfoEXT m_create_debug_info{ VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };
+				m_create_debug_info.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+				m_create_debug_info.pfnCallback = debug_callback;
+
 				if (CreateDebugReportCallbackEXT(m_instance, &m_create_debug_info, nullptr, &m_debug_callback) != VK_SUCCESS)
 				{
 					throw std::runtime_error("failed to set up debug callback!");
@@ -927,11 +925,8 @@ namespace px
 
 		queues m_queues;
 
-		VkApplicationInfo m_application_info;
-		VkInstanceCreateInfo m_instance_info;
 		VkInstance m_instance;
 
-		VkDebugReportCallbackCreateInfoEXT m_create_debug_info;
 		VkDebugReportCallbackEXT m_debug_callback;
 		VkPhysicalDevice m_physical_device;
 		VkDevice m_logical_device;
