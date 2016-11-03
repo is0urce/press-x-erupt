@@ -13,9 +13,16 @@ namespace px
 		void start()
 		{
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // no opengl, so we can assign vulkan
-			glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // static size window
+			glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE); // static size window
 
 			m_window = glfwCreateWindow(m_width, m_height, m_name.c_str(), nullptr, nullptr);
+
+			glfwSetWindowUserPointer(m_window, this);
+			glfwSetWindowSizeCallback(m_window, resize_callback);
+		}
+		static void resize_callback(GLFWwindow* window, int width, int height)
+		{
+			reinterpret_cast<basic_application*>(glfwGetWindowUserPointer(window))->on_resize(width, height);
 		}
 		int run()
 		{
@@ -70,6 +77,9 @@ namespace px
 
 	protected:
 		virtual void frame()
+		{
+		}
+		virtual void on_resize(int /*width*/, int /*height*/)
 		{
 		}
 

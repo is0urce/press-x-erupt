@@ -21,9 +21,13 @@ namespace px
 		}
 
 	protected:
-		virtual void frame()
+		virtual void frame() override
 		{
 			m_renderer.draw_frame();
+		}
+		virtual void on_resize(int width, int height) override
+		{
+			m_renderer.resize(width, height);
 		}
 
 	private:

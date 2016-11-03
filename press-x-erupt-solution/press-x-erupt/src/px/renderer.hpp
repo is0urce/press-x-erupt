@@ -43,13 +43,19 @@ namespace px
 			, m_instance_info{}
 			, m_create_debug_info{}
 			, m_physical_device(VK_NULL_HANDLE)
+			, m_swapchain(VK_NULL_HANDLE)
+			, m_pipeline_layout(VK_NULL_HANDLE)
+			, m_pipeline(VK_NULL_HANDLE)
+			, m_renderpass(VK_NULL_HANDLE)
+			, m_width(application.width())
+			, m_height(application.height())
 		{
 			create_instance();
 			setup_debug();
 			create_surface(application);
 			select_physical_device();
 			create_logical_device();
-			create_swapchain(application.width(), application.height());
+			create_swapchain();
 			create_image_views();
 			create_renderpass();
 			create_pipeline();
@@ -97,7 +103,17 @@ namespace px
 		void draw_frame()
 		{
 			uint32_t image_index;
-			vkAcquireNextImageKHR(m_logical_device, m_swapchain, std::numeric_limits<uint64_t>::max(), m_image_available, VK_NULL_HANDLE, &image_index);
+			VkResult result = vkAcquireNextImageKHR(m_logical_device, m_swapchain, std::numeric_limits<uint64_t>::max(), m_image_available, VK_NULL_HANDLE, &image_index);
+
+			if (result == VK_ERROR_OUT_OF_DATE_KHR)
+			{
+				reset_swapchain(m_width, m_height);
+				return;
+			}
+			else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+			{
+				throw std::runtime_error("failed to acquire swap chain image!");
+			}
 
 			VkSemaphore wait_semaphores[] = { m_image_available };
 			VkSemaphore signal_semaphores[] = { m_rendering_finished };
@@ -130,6 +146,10 @@ namespace px
 			presentInfo.pResults = nullptr;
 
 			vkQueuePresentKHR(m_presentation_queue, &presentInfo);
+		}
+		void resize(int width, int height)
+		{
+			reset_swapchain(width, height);
 		}
 
 	private:
@@ -242,13 +262,13 @@ namespace px
 				throw std::runtime_error("failed to create window surface!");
 			}
 		}
-		void create_swapchain(uint32_t width, uint32_t height)
+		void create_swapchain()
 		{
 			auto details = swapchain_support(m_physical_device);
 
 			VkSurfaceFormatKHR surface_format = choose_swapchain_format(details.formats);
 			VkPresentModeKHR mode = choose_swapchain_mode(details.presentation_modes);
-			m_extent = choose_swapchain_extent(details.capabilities, width, height);
+			m_extent = choose_swapchain_extent(details.capabilities, m_width, m_height);
 			m_format = surface_format.format;
 
 			// A value of 0 for maxImageCount means that there is no limit besides memory requirements, which is why we need to check for that.
@@ -288,11 +308,17 @@ namespace px
 			create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 			create_info.presentMode = mode;
 			create_info.clipped = VK_TRUE;
-			create_info.oldSwapchain = VK_NULL_HANDLE;
+
+			VkSwapchainKHR old = m_swapchain; // VK_NULL_HANDLE set in constructor
+			create_info.oldSwapchain = old;
 
 			if (vkCreateSwapchainKHR(m_logical_device, &create_info, nullptr, &m_swapchain) != VK_SUCCESS)
 			{
 				throw std::runtime_error("failed to create swap chain!");
+			}
+			if (old != VK_NULL_HANDLE)
+			{
+				vkDestroySwapchainKHR(m_logical_device, old, nullptr);
 			}
 
 			// The implementation is allowed to create more images, which is why we need to explicitly query the amount again.
@@ -302,6 +328,11 @@ namespace px
 		}
 		void create_image_views()
 		{
+			for (size_t i = 0, size = m_image_views.size(); i != size; ++i)
+			{
+				vkDestroyImageView(m_logical_device, m_image_views[i], nullptr);
+			}
+
 			m_image_views.resize(m_swapchain_images.size());
 			for (size_t i = 0, size = m_swapchain_images.size(); i != size; ++i)
 			{
@@ -328,6 +359,15 @@ namespace px
 		}
 		void create_pipeline()
 		{
+			if (m_pipeline != VK_NULL_HANDLE)
+			{
+				vkDestroyPipeline(m_logical_device, m_pipeline, nullptr);
+			}
+			if (m_pipeline_layout != VK_NULL_HANDLE)
+			{
+				vkDestroyPipelineLayout(m_logical_device, m_pipeline_layout, nullptr);
+			}
+
 			VkViewport viewport = {};
 			viewport.x = 0.0f;
 			viewport.y = 0.0f;
@@ -455,6 +495,11 @@ namespace px
 		}
 		void create_renderpass()
 		{
+			if (m_renderpass != VK_NULL_HANDLE)
+			{
+				vkDestroyRenderPass(m_logical_device, m_renderpass, nullptr);
+			}
+
 			VkAttachmentDescription attachment = {};
 			attachment.format = m_format;
 			attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -498,6 +543,11 @@ namespace px
 		}
 		void create_framebuffers()
 		{
+			for (size_t i = 0, size = m_swapchain_framebuffers.size(); i != size; ++i)
+			{
+				vkDestroyFramebuffer(m_logical_device, m_swapchain_framebuffers[i], nullptr);
+			}
+
 			size_t size = m_swapchain_images.size();
 			m_swapchain_framebuffers.resize(size);
 			for (size_t i = 0; i != size; ++i)
@@ -535,6 +585,11 @@ namespace px
 		}
 		void create_command_buffers()
 		{
+			if (m_command_buffers.size() > 0)
+			{
+				vkFreeCommandBuffers(m_logical_device, m_command_pool, static_cast<uint32_t>(m_command_buffers.size()), m_command_buffers.data());
+			}
+
 			auto size = m_swapchain_framebuffers.size();
 			m_command_buffers.resize(size);
 
@@ -589,6 +644,20 @@ namespace px
 			{
 				throw std::runtime_error("failed to create semaphores!");
 			}
+		}
+		void reset_swapchain(int width, int height)
+		{
+			vkDeviceWaitIdle(m_logical_device);
+
+			m_width = width;
+			m_height = height;
+
+			create_swapchain();
+			create_image_views();
+			create_renderpass();
+			create_pipeline();
+			create_framebuffers();
+			create_command_buffers();
 		}
 
 		bool layer_support(std::vector<const char*> const& validation_list) const
@@ -825,6 +894,9 @@ namespace px
 		}
 
 	private:
+		uint32_t m_width;
+		uint32_t m_height;
+
 		queues m_queues;
 
 		VkApplicationInfo m_application_info;
