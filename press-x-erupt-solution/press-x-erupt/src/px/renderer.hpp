@@ -71,9 +71,16 @@ namespace px
 			, m_width(application.width())
 			, m_height(application.height())
 		{
-			create_instance();
-			setup_debug();
-			create_surface(application);
+
+			uint32_t count = 0;
+			const char** extensions;
+			extensions = glfwGetRequiredInstanceExtensions(&count);
+			m_instance = vk_instance(count, extensions, validate);
+			if (glfwCreateWindowSurface(m_instance, application.window(), nullptr, &m_surface) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create window surface!");
+			}
+
 			select_physical_device();
 			create_logical_device();
 			create_swapchain();
@@ -113,13 +120,6 @@ namespace px
 			vkDestroySwapchainKHR(m_logical_device, m_swapchain, nullptr);
 			vkDestroyDevice(m_logical_device, nullptr);
 			vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-
-			if (validate)
-			{
-				DestroyDebugReportCallbackEXT(m_instance, m_debug_callback, nullptr);
-			}
-
-			vkDestroyInstance(m_instance, nullptr);
 		}
 		void draw_frame()
 		{
@@ -185,45 +185,6 @@ namespace px
 		}
 
 	private:
-		void create_instance()
-		{
-			VkApplicationInfo application_info{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
-			application_info.pApplicationName = "renderer";
-			application_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-			application_info.apiVersion = VK_API_VERSION_1_0;
-
-			if (validate && !layer_support(validation))
-			{
-				throw std::runtime_error("validation layers requested, but not available!");
-			}
-			auto extensions = required_extensions();
-
-			VkInstanceCreateInfo instance_info{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
-			instance_info.pApplicationInfo = &application_info;
-			instance_info.enabledExtensionCount = static_cast<decltype(VkInstanceCreateInfo::enabledExtensionCount)>(extensions.size());
-			instance_info.ppEnabledExtensionNames = extensions.data();
-			instance_info.enabledLayerCount = static_cast<decltype(VkInstanceCreateInfo::enabledLayerCount)>(validation.size());
-			instance_info.ppEnabledLayerNames = validation.empty() ? nullptr : validation.data();
-
-			if (vkCreateInstance(&instance_info, nullptr, &m_instance) != VK_SUCCESS)
-			{
-				throw std::runtime_error("failed to create instance!");
-			}
-		}
-		void setup_debug()
-		{
-			if (validate)
-			{
-				VkDebugReportCallbackCreateInfoEXT m_create_debug_info{ VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT };
-				m_create_debug_info.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
-				m_create_debug_info.pfnCallback = debug_callback;
-
-				if (CreateDebugReportCallbackEXT(m_instance, &m_create_debug_info, nullptr, &m_debug_callback) != VK_SUCCESS)
-				{
-					throw std::runtime_error("failed to set up debug callback!");
-				}
-			}
-		}
 		void select_physical_device()
 		{
 			uint32_t device_count = 0;
@@ -272,11 +233,11 @@ namespace px
 			VkDeviceCreateInfo create_info = {};
 			create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 			create_info.pQueueCreateInfos = queue_create_array.data();
-			create_info.queueCreateInfoCount = static_cast<decltype(VkDeviceCreateInfo::queueCreateInfoCount)>(queue_create_array.size());
+			create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_array.size());
 			create_info.pEnabledFeatures = &device_features;
-			create_info.enabledLayerCount = static_cast<decltype(VkDeviceCreateInfo::enabledLayerCount)>(validation.size());
-			create_info.ppEnabledLayerNames = validation.size() != 0 ? validation.data() : nullptr;
-			create_info.enabledExtensionCount = static_cast<decltype(VkDeviceCreateInfo::enabledExtensionCount)>(device_extensions.size());
+			create_info.enabledLayerCount = m_instance.layer_count();
+			create_info.ppEnabledLayerNames = m_instance.layers();
+			create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
 			create_info.ppEnabledExtensionNames = device_extensions.size() != 0 ? device_extensions.data() : nullptr;
 
 			if (vkCreateDevice(m_physical_device, &create_info, nullptr, &m_logical_device) != VK_SUCCESS)
@@ -286,13 +247,6 @@ namespace px
 
 			vkGetDeviceQueue(m_logical_device, queue_indices.graphics, 0, &m_graphics_queue);
 			vkGetDeviceQueue(m_logical_device, queue_indices.presentation, 0, &m_presentation_queue);
-		}
-		void create_surface(basic_application & application)
-		{
-			if (glfwCreateWindowSurface(m_instance, application.window(), nullptr, &m_surface) != VK_SUCCESS)
-			{
-				throw std::runtime_error("failed to create window surface!");
-			}
 		}
 		void create_swapchain()
 		{
@@ -584,8 +538,7 @@ namespace px
 			{
 				VkImageView attachments[] = { m_image_views[i] };
 
-				VkFramebufferCreateInfo framebufferInfo = {};
-				framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+				VkFramebufferCreateInfo framebufferInfo{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
 				framebufferInfo.renderPass = m_renderpass;
 				framebufferInfo.attachmentCount = 1;
 				framebufferInfo.pAttachments = attachments;
@@ -623,8 +576,7 @@ namespace px
 			auto size = m_swapchain_framebuffers.size();
 			m_command_buffers.resize(size);
 
-			VkCommandBufferAllocateInfo info = {};
-			info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+			VkCommandBufferAllocateInfo info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
 			info.commandPool = m_command_pool;
 			info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			info.commandBufferCount = static_cast<uint32_t>(size);
@@ -684,18 +636,6 @@ namespace px
 			create_pipeline();
 			create_framebuffers();
 			create_command_buffers();
-		}
-
-		bool layer_support(std::vector<const char*> const& validation_list) const
-		{
-			uint32_t count;
-			vkEnumerateInstanceLayerProperties(&count, nullptr);
-			std::vector<VkLayerProperties> layers(count);
-			vkEnumerateInstanceLayerProperties(&count, layers.data());
-
-			// every layer has his support
-			return std::all_of(std::begin(validation_list), std::end(validation_list), [&layers](const char* layer_name) {
-				return std::any_of(std::begin(layers), std::end(layers), [name = std::string(layer_name)](auto layer) { return name == layer.layerName; }); });
 		}
 		std::vector<const char*> required_extensions() const
 		{
@@ -850,41 +790,6 @@ namespace px
 			return extent;
 		}
 
-		static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
-			VkDebugReportFlagsEXT /*flags*/,
-			VkDebugReportObjectTypeEXT /*object_type*/,
-			uint64_t /*obj*/,
-			size_t /*location*/,
-			int32_t code,
-			const char* /*prefix*/,
-			const char* msg,
-			void* /*userData*/)
-		{
-
-			std::cerr << "validation layer: " << msg << " code: " << code << std::endl;
-
-			return VK_FALSE;
-		}
-		static VkResult CreateDebugReportCallbackEXT(VkInstance instance, const VkDebugReportCallbackCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugReportCallbackEXT* pCallback)
-		{
-			auto func = (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
-			if (func != nullptr)
-			{
-				return func(instance, pCreateInfo, pAllocator, pCallback);
-			}
-			else
-			{
-				return VK_ERROR_EXTENSION_NOT_PRESENT;
-			}
-		}
-		static void DestroyDebugReportCallbackEXT(VkInstance instance, VkDebugReportCallbackEXT callback, const VkAllocationCallbacks* pAllocator)
-		{
-			auto func = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
-			if (func != nullptr)
-			{
-				func(instance, callback, pAllocator);
-			}
-		}
 		static std::vector<char> read_file(std::string const& name)
 		{
 			std::ifstream file(name, std::ios::ate | std::ios::binary);
@@ -922,12 +827,10 @@ namespace px
 	private:
 		uint32_t m_width;
 		uint32_t m_height;
-
 		queues m_queues;
 
-		VkInstance m_instance;
+		vk_instance m_instance;
 
-		VkDebugReportCallbackEXT m_debug_callback;
 		VkPhysicalDevice m_physical_device;
 		VkDevice m_logical_device;
 		VkQueue m_graphics_queue;
@@ -961,10 +864,8 @@ namespace px
 	private:
 #ifndef _DEBUG
 		const bool validate = false;
-		const std::vector<const char*> validation = {};
 #else
 		const bool validate = true;
-		const std::vector<const char*> validation = { "VK_LAYER_LUNARG_standard_validation" };
 #endif
 		const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 	};
