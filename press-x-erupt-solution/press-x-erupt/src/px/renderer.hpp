@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -58,7 +59,7 @@ namespace px
 			{
 				return std::array<VkVertexInputAttributeDescription, 2>	{
 					VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex, position) },
-					VkVertexInputAttributeDescription{ 0, 1, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex, color) }
+					VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, color) }
 				};
 			}
 		};
@@ -90,6 +91,7 @@ namespace px
 			create_pipeline();
 			create_framebuffers();
 			create_command_pool();
+			create_buffer();
 			create_command_buffers();
 			create_semaphores();
 		}
@@ -102,6 +104,9 @@ namespace px
 
 			vkDestroySemaphore(m_device, m_image_available, nullptr);
 			vkDestroySemaphore(m_device, m_rendering_finished, nullptr);
+
+			vkFreeMemory(m_device, m_memory, nullptr);
+			vkDestroyBuffer(m_device, m_buffer, nullptr);
 
 			vkDestroyCommandPool(m_device, m_command_pool, nullptr);
 
@@ -350,11 +355,13 @@ namespace px
 			fragment_info.pSpecializationInfo = nullptr;
 			VkPipelineShaderStageCreateInfo shader_stages[] = { vertex_info, fragment_info };
 
+			auto binding_description = vertex::binding_description();
+			auto attribute_descriptions = vertex::attribute_descriptions();
 			VkPipelineVertexInputStateCreateInfo vertex_input_info = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-			vertex_input_info.vertexBindingDescriptionCount = 0;
-			vertex_input_info.pVertexBindingDescriptions = nullptr;
-			vertex_input_info.vertexAttributeDescriptionCount = 0;
-			vertex_input_info.pVertexAttributeDescriptions = nullptr;
+			vertex_input_info.vertexBindingDescriptionCount = 1;
+			vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribute_descriptions.size());
+			vertex_input_info.pVertexBindingDescriptions = &binding_description;
+			vertex_input_info.pVertexAttributeDescriptions = attribute_descriptions.data();
 
 			VkPipelineInputAssemblyStateCreateInfo input_assembly_info = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
 			input_assembly_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -566,9 +573,13 @@ namespace px
 				renderpass_info.clearValueCount = 1;
 				renderpass_info.pClearValues = &clear_color;
 
+				VkBuffer buffers[] = { m_buffer };
+				VkDeviceSize offsets[] = { 0 };
+
 				vkCmdBeginRenderPass(m_command_buffers[i], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 				vkCmdBindPipeline(m_command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-				vkCmdDraw(m_command_buffers[i], 3, 1, 0, 0);
+				vkCmdBindVertexBuffers(m_command_buffers[i], 0, 1, buffers, offsets);
+				vkCmdDraw(m_command_buffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 				vkCmdEndRenderPass(m_command_buffers[i]);
 
 				if (vkEndCommandBuffer(m_command_buffers[i]) != VK_SUCCESS)
@@ -587,6 +598,39 @@ namespace px
 				throw std::runtime_error("failed to create semaphores!");
 			}
 		}
+		void create_buffer()
+		{
+			VkBufferCreateInfo buffer_info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+			buffer_info.size = sizeof(vertices[0]) * vertices.size();
+			buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+			buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			buffer_info.flags = 0; // sparse buffer memory, which is not relevant
+
+			if (vkCreateBuffer(m_device, &buffer_info, nullptr, &m_buffer) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to create vertex buffer!");
+			}
+
+			VkMemoryRequirements memory_requirements;
+			vkGetBufferMemoryRequirements(m_device, m_buffer, &memory_requirements);
+
+			VkMemoryAllocateInfo allocate_info{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+			allocate_info.allocationSize = memory_requirements.size;
+			allocate_info.memoryTypeIndex = find_memory(memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+			if (vkAllocateMemory(m_device, &allocate_info, nullptr, &m_memory) != VK_SUCCESS)
+			{
+				throw std::runtime_error("failed to allocate vertex buffer memory!");
+			}
+
+			vkBindBufferMemory(m_device, m_buffer, m_memory, 0);
+
+			void* data;
+			vkMapMemory(m_device, m_memory, 0, buffer_info.size, 0, &data);
+			std::memcpy(data, vertices.data(), static_cast<size_t>(buffer_info.size));
+			vkUnmapMemory(m_device, m_memory);
+		}
+
 		void reset_swapchain()
 		{
 			vkDeviceWaitIdle(m_device);
@@ -784,6 +828,21 @@ namespace px
 			}
 			return shader;
 		}
+		uint32_t find_memory(uint32_t filter, VkMemoryPropertyFlags properties)
+		{
+			VkPhysicalDeviceMemoryProperties memory_properties;
+			vkGetPhysicalDeviceMemoryProperties(m_physical_device, &memory_properties);
+
+			for (uint32_t i = 0; i != memory_properties.memoryTypeCount; ++i)
+			{
+				if ((filter & (1 << i)) && (memory_properties.memoryTypes[i].propertyFlags & properties) == properties)
+				{
+					return i;
+				}
+			}
+
+			throw std::runtime_error("failed to find suitable memory type!");
+		}
 
 	private:
 		uint32_t m_width;
@@ -796,6 +855,8 @@ namespace px
 
 		VkQueue m_graphics_queue;
 		VkQueue m_presentation_queue;
+		VkBuffer m_buffer;
+		VkDeviceMemory m_memory;
 
 		VkFormat m_format;
 		VkExtent2D m_extent;
@@ -818,7 +879,7 @@ namespace px
 		const std::vector<vertex> vertices = {
 			{ { 0.0f, -0.5f },{ 1.0f, 0.0f, 0.0f } },
 			{ { 0.5f, 0.5f },{ 0.0f, 1.0f, 0.0f } },
-			{ { -0.5f, 0.5f },{ 0.0f, 0.0f, 1.0f } }
+			{ { -0.5f, 0.5f },{ 1.0f, 1.0f, 1.0f } }
 		};
 
 	private:
