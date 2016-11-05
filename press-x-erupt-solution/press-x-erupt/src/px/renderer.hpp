@@ -59,7 +59,7 @@ namespace px
 			{
 				return std::array<VkVertexInputAttributeDescription, 2>	{
 					VkVertexInputAttributeDescription{ 0, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(vertex, position) },
-					VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, color) }
+						VkVertexInputAttributeDescription{ 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, color) }
 				};
 			}
 		};
@@ -91,7 +91,7 @@ namespace px
 			create_pipeline();
 			create_framebuffers();
 			create_command_pool();
-			create_buffer();
+			create_buffers();
 			create_command_buffers();
 			create_semaphores();
 		}
@@ -105,7 +105,9 @@ namespace px
 			vkDestroySemaphore(m_device, m_image_available, nullptr);
 			vkDestroySemaphore(m_device, m_rendering_finished, nullptr);
 
+			vkFreeMemory(m_device, m_index_memory, nullptr);
 			vkFreeMemory(m_device, m_memory, nullptr);
+			vkDestroyBuffer(m_device, m_index_buffer, nullptr);
 			vkDestroyBuffer(m_device, m_buffer, nullptr);
 
 			vkDestroyCommandPool(m_device, m_command_pool, nullptr);
@@ -579,7 +581,8 @@ namespace px
 				vkCmdBeginRenderPass(m_command_buffers[i], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 				vkCmdBindPipeline(m_command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 				vkCmdBindVertexBuffers(m_command_buffers[i], 0, 1, buffers, offsets);
-				vkCmdDraw(m_command_buffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+				vkCmdBindIndexBuffer(m_command_buffers[i], m_index_buffer, 0, VK_INDEX_TYPE_UINT16);
+				vkCmdDrawIndexed(m_command_buffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 				vkCmdEndRenderPass(m_command_buffers[i]);
 
 				if (vkEndCommandBuffer(m_command_buffers[i]) != VK_SUCCESS)
@@ -598,39 +601,96 @@ namespace px
 				throw std::runtime_error("failed to create semaphores!");
 			}
 		}
-		void create_buffer()
+		void create_buffers()
+		{
+			void* data;
+			VkBuffer staging_buffer;
+			VkDeviceMemory staging_memory;
+
+			// vertices
+			VkDeviceSize vertices_size = static_cast<VkDeviceSize>(sizeof(vertices[0]) * vertices.size());
+
+			create_buffer(vertices_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_memory);
+			vkMapMemory(m_device, staging_memory, 0, vertices_size, 0, &data);
+			std::memcpy(data, vertices.data(), static_cast<size_t>(vertices_size));
+			vkUnmapMemory(m_device, staging_memory);
+
+			create_buffer(vertices_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_buffer, m_memory);
+			copy_buffer(staging_buffer, m_buffer, vertices_size);
+
+			vkDestroyBuffer(m_device, staging_buffer, nullptr);
+			vkFreeMemory(m_device, staging_memory, nullptr);
+
+			// indices
+			VkDeviceSize index_size = static_cast<VkDeviceSize>(sizeof(indices[0]) * indices.size());
+			create_buffer(index_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_memory);
+			vkMapMemory(m_device, staging_memory, 0, index_size, 0, &data);
+			std::memcpy(data, indices.data(), static_cast<size_t>(index_size));
+			vkUnmapMemory(m_device, staging_memory);
+
+			create_buffer(index_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_index_buffer, m_index_memory);
+			copy_buffer(staging_buffer, m_index_buffer, index_size);
+
+			vkDestroyBuffer(m_device, staging_buffer, nullptr);
+			vkFreeMemory(m_device, staging_memory, nullptr);
+		}
+
+		void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& memory)
 		{
 			VkBufferCreateInfo buffer_info{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-			buffer_info.size = sizeof(vertices[0]) * vertices.size();
-			buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+			buffer_info.size = size;
+			buffer_info.usage = usage;
 			buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			buffer_info.flags = 0; // sparse buffer memory, which is not relevant
-
-			if (vkCreateBuffer(m_device, &buffer_info, nullptr, &m_buffer) != VK_SUCCESS)
+			if (vkCreateBuffer(m_device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
 			{
 				throw std::runtime_error("failed to create vertex buffer!");
 			}
 
 			VkMemoryRequirements memory_requirements;
-			vkGetBufferMemoryRequirements(m_device, m_buffer, &memory_requirements);
+			vkGetBufferMemoryRequirements(m_device, buffer, &memory_requirements);
 
 			VkMemoryAllocateInfo allocate_info{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 			allocate_info.allocationSize = memory_requirements.size;
-			allocate_info.memoryTypeIndex = find_memory(memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			allocate_info.memoryTypeIndex = find_memory(memory_requirements.memoryTypeBits, properties);
 
-			if (vkAllocateMemory(m_device, &allocate_info, nullptr, &m_memory) != VK_SUCCESS)
+			if (vkAllocateMemory(m_device, &allocate_info, nullptr, &memory) != VK_SUCCESS)
 			{
 				throw std::runtime_error("failed to allocate vertex buffer memory!");
 			}
 
-			vkBindBufferMemory(m_device, m_buffer, m_memory, 0);
-
-			void* data;
-			vkMapMemory(m_device, m_memory, 0, buffer_info.size, 0, &data);
-			std::memcpy(data, vertices.data(), static_cast<size_t>(buffer_info.size));
-			vkUnmapMemory(m_device, m_memory);
+			vkBindBufferMemory(m_device, buffer, memory, 0);
 		}
+		void copy_buffer(VkBuffer src, VkBuffer dst, VkDeviceSize size)
+		{
+			VkBufferCopy copy{};
+			copy.srcOffset = 0;
+			copy.dstOffset = 0;
+			copy.size = size;
 
+			VkCommandBufferAllocateInfo allocate_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+			allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			allocate_info.commandPool = m_command_pool;
+			allocate_info.commandBufferCount = 1;
+
+			VkCommandBuffer command_buffer;
+			vkAllocateCommandBuffers(m_device, &allocate_info, &command_buffer);
+
+			VkCommandBufferBeginInfo begin_info = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+			begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+			vkBeginCommandBuffer(command_buffer, &begin_info);
+			vkCmdCopyBuffer(command_buffer, src, dst, 1, &copy);
+			vkEndCommandBuffer(command_buffer);
+
+			VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &command_buffer;
+
+			vkQueueSubmit(m_graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+			vkQueueWaitIdle(m_graphics_queue);
+
+			vkFreeCommandBuffers(m_device, m_command_pool, 1, &command_buffer);
+		}
 		void reset_swapchain()
 		{
 			vkDeviceWaitIdle(m_device);
@@ -855,8 +915,11 @@ namespace px
 
 		VkQueue m_graphics_queue;
 		VkQueue m_presentation_queue;
+
 		VkBuffer m_buffer;
 		VkDeviceMemory m_memory;
+		VkBuffer m_index_buffer;
+		VkDeviceMemory m_index_memory;
 
 		VkFormat m_format;
 		VkExtent2D m_extent;
@@ -877,9 +940,13 @@ namespace px
 		VkSemaphore m_rendering_finished;
 
 		const std::vector<vertex> vertices = {
-			{ { 0.0f, -0.5f },{ 1.0f, 0.0f, 0.0f } },
-			{ { 0.5f, 0.5f },{ 0.0f, 1.0f, 0.0f } },
+			{ { -0.5f, -0.5f },{ 1.0f, 0.0f, 0.0f } },
+			{ { 0.5f, -0.5f },{ 0.0f, 1.0f, 0.0f } },
+			{ { 0.5f, 0.5f },{ 0.0f, 0.0f, 1.0f } },
 			{ { -0.5f, 0.5f },{ 1.0f, 1.0f, 1.0f } }
+		};
+		const std::vector<uint16_t> indices = {
+			0, 1, 2, 2, 3, 0
 		};
 
 	private:
